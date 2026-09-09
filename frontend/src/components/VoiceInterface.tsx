@@ -28,7 +28,11 @@ type VoiceResult = {
 
 type VoiceInterfaceProps = {
   disabled?: boolean;
-  language: string;
+  inputLanguage: string;
+  outputLanguage: string;
+  latitude?: number;
+  longitude?: number;
+  history?: { role: string; text: string }[];
   onResult: (result: VoiceResult) => void;
   onStatus: (status: string) => void;
 };
@@ -37,7 +41,7 @@ function MicIcon({ recording }: { recording: boolean }) {
   return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8" />{recording && <circle cx="12" cy="8" r="1" fill="currentColor" stroke="none" />}</svg>;
 }
 
-export default function VoiceInterface({ disabled = false, language, onResult, onStatus }: VoiceInterfaceProps) {
+export default function VoiceInterface({ disabled = false, inputLanguage, outputLanguage, latitude, longitude, history, onResult, onStatus }: VoiceInterfaceProps) {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -83,7 +87,7 @@ export default function VoiceInterface({ disabled = false, language, onResult, o
         }
         try {
           onStatus("Transcribing your voice request…");
-          const result = await postVoiceQuery(recordingBlob, language);
+          const result = await postVoiceQuery(recordingBlob, inputLanguage, outputLanguage, { latitude, longitude, history });
           onResult(result);
           onStatus(result.voice_error ? "Text answer ready; audio playback is unavailable." : "Voice answer ready");
           if (result.audio_base64) {

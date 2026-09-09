@@ -85,7 +85,7 @@ export default function DashboardPage() {
   const [logs, setLogs] = useState([]);
   const [showMap, setShowMap] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
-  const [voiceLanguage, setVoiceLanguage] = useState("hi-IN");
+  const [voiceLanguage, setVoiceLanguage] = useState("en-IN");
   const [appLanguage, setAppLanguage] = useState("en-IN");
   const [showSettings, setShowSettings] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
@@ -95,6 +95,7 @@ export default function DashboardPage() {
   const [route, setRoute] = useState(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const [tripDecision, setTripDecision] = useState(null);
+  const [selectedPfz, setSelectedPfz] = useState(null);
   const { location, status: locationStatus, error: locationError, toastMessage, regions, chooseManual, changeLocation } = useResolvedLocation();
 
   useEffect(() => {
@@ -158,6 +159,21 @@ export default function DashboardPage() {
       if (savedChat) setMessages([{ role: "user", text: savedChat.query }, { role: "assistant", text: savedChat.answer }]);
     });
   }, []);
+
+  useEffect(() => {
+    if (selectedPfz && selectedPfz.destination) {
+      if (isOffline || !navigator.onLine) return;
+      const { lon, lat } = selectedPfz.destination;
+      fetchTripDecision({ latitude: lat, longitude: lon })
+        .then(setTripDecision)
+        .catch(() => {});
+    } else if (!selectedPfz && location && !isOffline) {
+      fetchTripDecision({ latitude: location.lat, longitude: location.lon })
+        .then(setTripDecision)
+        .catch(() => {});
+    }
+  }, [selectedPfz, location, isOffline]);
+
   const layerSummary = useMemo(() => `${pfz?.features?.length || 0} zones · ${alerts.length} alerts`, [pfz, alerts]);
 
   async function submitQuery(rawQuery) {
@@ -180,11 +196,12 @@ export default function DashboardPage() {
       return;
     }
     try {
-      const recentUserTexts = messages.filter((item) => item.role === "user").slice(-3).map((item) => item.text);
-      const contextPrompt = recentUserTexts.length ? `${recentUserTexts.join("\n")}\n${submittedQuery}` : submittedQuery;
+      // Send only the current question — previous messages confused intent detection
+      // and caused every reply to be the same. History is passed separately as context.
+      const recentHistory = messages.slice(-6).map((item) => ({ role: item.role, text: item.text }));
       const currentLat = location?.lat ?? mapState.center[0];
       const currentLon = location?.lon ?? mapState.center[1];
-      const result = await postQuery(contextPrompt, { language, latitude: currentLat, longitude: currentLon });
+      const result = await postQuery(submittedQuery, { language, latitude: currentLat, longitude: currentLon, history: recentHistory });
       const answer = result.answer || "No answer returned.";
       setMessages((current) => [...current, { role: "assistant", text: answer }]);
       if (result.geojson && result.geojson.features) {
@@ -288,7 +305,7 @@ export default function DashboardPage() {
           <div className="composer-wrap">
             <form className="composer" onSubmit={(event) => { event.preventDefault(); submitQuery(query); }}>
               <textarea value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ask a marine question..." rows={1} disabled={loading} aria-label="Your question" onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitQuery(query); } }} />
-              <VoiceInterface disabled={loading || isOffline} language={voiceLanguage} onStatus={(statusMessage) => { setStatus(statusMessage); if (/transcribing/i.test(statusMessage)) setLoading(true); if (/voice answer ready|text answer ready|voice processing unavailable/i.test(statusMessage)) setLoading(false); if (/unavailable|error|failed|quota|configured/i.test(statusMessage)) setLogs((current) => [...current, { level: "error", stage: "voice", message: statusMessage }]); }} onResult={handleVoiceResult} />
+              <VoiceInterface disabled={loading || isOffline} inputLanguage={voiceLanguage} outputLanguage={language} latitude={location?.lat ?? mapState.center[0]} longitude={location?.lon ?? mapState.center[1]} history={messages.slice(-6).map((item) => ({ role: item.role, text: item.text }))} onStatus={(statusMessage) => { setStatus(statusMessage); if (/transcribing/i.test(statusMessage)) setLoading(true); if (/voice answer ready|text answer ready|voice processing unavailable/i.test(statusMessage)) setLoading(false); if (/unavailable|error|failed|quota|configured/i.test(statusMessage)) setLogs((current) => [...current, { level: "error", stage: "voice", message: statusMessage }]); }} onResult={handleVoiceResult} />
               <button type="submit" className="send-button" disabled={loading || !query.trim()} aria-label="Send question" title="Send question"><Icon name="send" size={18} /></button>
             </form>
             <div className="composer-meta"><label htmlFor="query-language">{message(appLanguage, "replyIn")}</label><select id="query-language" value={language} onChange={(event) => setLanguage(event.target.value)} disabled={loading}>{LOCALES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></div>
@@ -317,7 +334,7 @@ export default function DashboardPage() {
               <span>{message(appLanguage, "pfzWidened")}</span>
             </div>
           )}
-          <div className={`map-frame ${isOffline ? "is-cached" : ""}`}><GeospatialMap pfz={pfz} alerts={alerts} mapState={mapState} cached={isOffline} currentLocation={location ? { latitude: location.lat, longitude: location.lon, accuracy: 1000 } : null} route={route} routeLoading={routeLoading} onRouteRequest={planRoute} onMapChange={(nextMapState) => { setMapState(nextMapState); saveMapState(nextMapState); }} /></div>
+          <div className={`map-frame ${isOffline ? "is-cached" : ""}`}><GeospatialMap pfz={pfz} alerts={alerts} mapState={mapState} cached={isOffline} currentLocation={location ? { latitude: location.lat, longitude: location.lon, accuracy: 1000 } : null} route={route} routeLoading={routeLoading} onRouteRequest={planRoute} selectedPfz={selectedPfz} onPfzSelect={setSelectedPfz} onMapChange={(nextMapState) => { setMapState(nextMapState); saveMapState(nextMapState); }} /></div>
           <div className="map-footer"><span><i className="legend-dot zone" />Potential fishing zones</span><span><i className="legend-dot location" />{location ? `Resolved ${location.source} location` : locationStatus}</span>{pfz?.last_updated && <span>{pfz.stale ? "Last updated: " : "PFZ as of "}{new Date(pfz.last_updated).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}</div>
         </section>
         <section className={`mobile-offline-column ${!showOffline ? "mobile-hidden" : ""}`}><div className="offline-panel"><button type="button" className="offline-panel-trigger" onClick={() => setOfflineExpanded((current) => !current)} aria-expanded={offlineExpanded}><strong>{message(appLanguage, "offlineData")}</strong><span aria-hidden="true">{offlineExpanded || showOffline ? "−" : "+"}</span></button>{(offlineExpanded || showOffline) && <div className="offline-panel-content"><p>{message(appLanguage, isOffline ? "offlinePaused" : "offlineStored")}</p><div className="offline-stat"><strong>{cachedAt ? formatAge(cachedAt) : "No snapshot yet"}</strong><span>{message(appLanguage, "lastSync")}</span></div><div className="offline-stat"><strong>{pfz?.features?.length || 0}</strong><span>{message(appLanguage, "cachedZones")}</span></div><div className="offline-stat"><strong>{alerts.length}</strong><span>{message(appLanguage, "cachedAlerts")}</span></div><p className="offline-note">{message(appLanguage, "offlineLimit")}</p></div>}</div></section>

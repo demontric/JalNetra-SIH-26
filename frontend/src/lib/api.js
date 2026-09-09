@@ -60,10 +60,10 @@ export function fetchTripDecision(params) {
   return requestJson(withParams("/api/v1/trip-decision", params));
 }
 
-export function postQuery(query, { language = "en-IN", userId = "dashboard-user", latitude, longitude } = {}) {
+export function postQuery(query, { language = "en-IN", userId = "dashboard-user", latitude, longitude, history = [] } = {}) {
   return requestJson("/api/v1/query", {
     method: "POST",
-    body: JSON.stringify({ query, language, user_id: userId, latitude, longitude }),
+    body: JSON.stringify({ query, language, user_id: userId, latitude, longitude, history }),
   });
 }
 
@@ -81,10 +81,16 @@ export function synthesizeSpeech(text, language) {
   });
 }
 
-export async function postVoiceQuery(audio, language) {
+export async function postVoiceQuery(audio, inputLanguage, outputLanguage, { latitude, longitude, history = [] } = {}) {
   const formData = new FormData();
   formData.append("audio", audio, audio.name || "recording.webm");
-  formData.append("language", language);
+  formData.append("language", inputLanguage);
+  formData.append("reply_language", outputLanguage);
+  if (latitude != null && longitude != null) {
+    formData.append("latitude", String(latitude));
+    formData.append("longitude", String(longitude));
+  }
+  formData.append("history", JSON.stringify(history));
 
   try {
     const response = await fetch(`${API_BASE}/api/v1/voice-query`, {

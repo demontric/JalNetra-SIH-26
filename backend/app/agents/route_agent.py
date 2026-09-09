@@ -23,7 +23,7 @@ def route_optimization_agent(state: AgentState) -> AgentState:
         return {
             "route_result": {
                 "available": False,
-                "error": "Give me a destination (for example, coordinates like 9.5, 88.9) to plan a route to.",
+                "error": "Please provide a destination—for example, coordinates such as 9.5, 88.9—so I can plan a safe route.",
             }
         }
 

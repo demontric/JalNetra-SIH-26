@@ -1,119 +1,83 @@
-"""Gemini-backed conversational responses for the model-free workflow."""
+"""Gemini-backed conversational responses, adapted to run on Groq."""
 
 from __future__ import annotations
 
 import os
 import json
 from pathlib import Path
-
 import requests
 from dotenv import load_dotenv
-
 from app.language import LANGUAGE_NAMES
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-
-
 class GeminiServiceError(RuntimeError):
-    """Raised when Gemini cannot produce a response."""
-
-
-_TEXT_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {"text": {"type": "string"}},
-    "required": ["text"],
-    "additionalProperties": False,
-}
-
-
-def _response_text(payload: dict) -> str:
-    candidates = payload.get("candidates", [])
-    if not candidates:
-        if payload.get("promptFeedback", {}).get("blockReason"):
-            raise GeminiServiceError("Gemini blocked this request due to safety settings.")
-        raise GeminiServiceError("Gemini returned no response candidates.")
-
-    candidate = candidates[0]
-    parts = candidate.get("content", {}).get("parts", [])
-    content = "".join(part.get("text", "") for part in parts)
-    if not content:
-        if candidate.get("finishReason") in {"SAFETY", "RECITATION", "BLOCKLIST"}:
-            raise GeminiServiceError("Gemini blocked this response due to safety settings.")
-        raise GeminiServiceError("Gemini returned an empty response.")
-
-    try:
-        answer = json.loads(content)["text"].strip()
-    except (KeyError, TypeError, ValueError) as error:
-        raise GeminiServiceError("Gemini returned an invalid structured response.") from error
-    if not answer:
-        raise GeminiServiceError("Gemini returned an empty response.")
-    return answer
-
+    """Raised when the LLM cannot produce a response."""
 
 def _generate(system_prompt: str, user_prompt: str) -> str:
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
-        raise GeminiServiceError("Gemini is not configured. Set GEMINI_API_KEY.")
+        raise GeminiServiceError("Groq is not configured. Set GROQ_API_KEY.")
 
     try:
         response = requests.post(
-            GEMINI_URL,
-            params={"key": api_key},
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
             json={
-                "system_instruction": {"parts": [{"text": system_prompt}]},
-                "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "responseMimeType": "application/json",
-                    "responseJsonSchema": _TEXT_RESPONSE_SCHEMA,
-                },
+                "model": os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.4,
             },
             timeout=45,
         )
         response.raise_for_status()
         payload = response.json()
     except requests.RequestException as error:
-        status = getattr(error.response, "status_code", None)
-        if status in (401, 403):
-            raise GeminiServiceError("Gemini rejected the API key. Check GEMINI_API_KEY.") from error
-        if status == 429:
-            raise GeminiServiceError("Gemini is currently rate limited. Please try again shortly.") from error
-        raise GeminiServiceError("Gemini is temporarily unavailable.") from error
-    except ValueError as error:
-        raise GeminiServiceError("Gemini returned an invalid response.") from error
+        raise GeminiServiceError("LLM API is temporarily unavailable.") from error
 
-    return _response_text(payload)
-
+    try:
+        answer = payload["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError) as error:
+        raise GeminiServiceError("LLM returned an invalid response.") from error
+    
+    if not answer:
+        raise GeminiServiceError("LLM returned an empty response.")
+        
+    return answer
 
 def translate_to_english(text: str, language: str) -> str:
     if language == "en-IN":
         return text.strip()
     return _generate(
         "Translate the user's message to concise natural English. Return only the translation. "
-        "Preserve names, coordinates, quantities, and the user's intent.",
+        "Do not answer, summarize, add context, or change the user's intent. Preserve names, coordinates, quantities, dates, and safety questions exactly.",
         f"Language: {LANGUAGE_NAMES.get(language, language)}\nMessage: {text}",
     )
-
 
 def translate_from_english(text: str, language: str) -> str:
     if language == "en-IN":
         return text.strip()
     return _generate(
-        f"Requested language locale: {language}. Translate the answer into natural {LANGUAGE_NAMES.get(language, language)}. Return only the translation. "
-        "Keep marine terms, numbers, coordinates, caveats, and paragraph breaks accurate.",
+        f"Translate this English answer into natural {LANGUAGE_NAMES.get(language, language)}. Return only the translation. "
+        "Do not answer the question again or change its meaning. Preserve the YES/NO safety decision, marine terms, numbers, units, coordinates, caveats, and paragraph breaks exactly.",
         text,
     )
 
-
 def answer_query(query: str) -> str:
     return _generate(
-        "You are JalNetra, a concise marine information assistant for fishers and coastal authorities. "
-        "Answer using reasonable general knowledge and estimation. Do not claim a trained PFZ, cyclone, "
-        "or other prediction model was used. Do not invent live values. Clearly label estimates and say "
-        "when information is unavailable. Do not give time constraints, ETAs, deadlines, or promises about "
-        "when something will happen. Give practical, generic guidance in plain text, donot use * to bold, donot give large replies, give small replies in 1-2 sentences.",
+        "You are JalNetra, a friendly and direct marine assistant for Indian fishers and coastal workers. "
+        "Your personality: helpful, honest, concise — like a knowledgeable local coast guard officer.\n"
+        "Rules you MUST follow:\n"
+        "- Answer the EXACT question asked. Never give a generic weather summary if the question is specific.\n"
+        "- For safety questions ('can I go?', 'is it safe?'): start with a clear YES or NO, then give 1 short reason.\n"
+        "- For tomorrow/forecast questions: use the tomorrow data provided in the context, not today's.\n"
+        "- For off-topic messages (greetings, jokes, random text, gibberish): respond warmly in 1 sentence and offer marine help.\n"
+        "- For fishing zone questions: mention confidence level and direction if available.\n"
+        "- Respond in English; the caller handles the final regional-language translation.\n"
+        "- NEVER use bullet points, asterisks (*), or markdown formatting.\n"
+        "- Keep responses to 1-3 sentences maximum. Be direct and specific.",
         query,
     )

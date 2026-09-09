@@ -43,14 +43,24 @@ function alertCollection(alerts) {
   };
 }
 
-function styleFeature(feature, cached, pfzStale) {
+function pfzKey(feature) {
+  return `${feature?.properties?.name || "pfz"}-${feature?.geometry?.coordinates?.[0]?.[0]?.join(",")}`;
+}
+
+function pfzDestination(feature) {
+  const points = feature.geometry.coordinates[0].slice(0, -1);
+  return { lat: points.reduce((sum, [, lat]) => sum + lat, 0) / points.length, lon: points.reduce((sum, [lon]) => sum + lon, 0) / points.length };
+}
+
+function styleFeature(feature, cached, pfzStale, selectedPfz) {
   const zoneType = feature?.properties?.zone_type;
   const confidence = Number(feature?.properties?.confidence_score || 0);
   const green = Math.round(90 + confidence * 100).toString(16).padStart(2, "0");
-  const computedStyle = zoneType === "potential_fishing_zone" ? { color: "#166534", fillColor: `#${green}b84a`, fillOpacity: 0.25 + confidence * 0.45, weight: 2 } : {};
+  const selectedStyle = pfzKey(feature) === selectedPfz ? { color: "#0e7490", fillColor: "#22d3ee", fillOpacity: 0.55, weight: 4 } : {};
+  const computedStyle = zoneType === "potential_fishing_zone" ? { color: "#166534", fillColor: `#${green}b84a`, fillOpacity: 0.25 + confidence * 0.45, weight: 2, ...selectedStyle } : {};
   const cachedStyle = cached || pfzStale ? { opacity: 0.68, fillOpacity: 0.18, weight: 2, dashArray: "7 5" } : {};
   if (zoneType === "potential_fishing_zone") {
-    return { ...computedStyle, ...cachedStyle };
+    return { ...computedStyle, ...cachedStyle, ...selectedStyle };
   }
   if (zoneType === "weather_alert") {
     return { color: "#b45309", fillColor: "#f59e0b", fillOpacity: 0.22, weight: 2, ...cachedStyle };
@@ -58,10 +68,12 @@ function styleFeature(feature, cached, pfzStale) {
   return { color: "#1d4ed8", fillColor: "#60a5fa", fillOpacity: 0.12, weight: 2, dashArray: "6 4", ...cachedStyle };
 }
 
-function bindPopup(feature, layer) {
+function bindPopup(feature, layer, onPfzSelect) {
   const props = feature.properties || {};
   const details = props.confidence_score == null ? "" : `<br />Confidence: ${(props.confidence_score * 100).toFixed(0)}%<br />SST: ${Number(props.sst_value).toFixed(2)} C<br />Chlorophyll: ${Number(props.chlorophyll_value).toFixed(3)} mg/m3`;
-  layer.bindPopup(`<strong>${props.name || props.zone_type || "Marine zone"}</strong>${details}`);
+  const selectable = props.zone_type === "potential_fishing_zone";
+  layer.bindPopup(`<strong>${props.name || props.zone_type || "Marine zone"}</strong>${details}${selectable ? "<br />Click this zone to select it for safe routing." : ""}`);
+  if (selectable) layer.on("click", () => onPfzSelect?.({ key: pfzKey(feature), destination: pfzDestination(feature) }));
 }
 
 function MapStateSaver({ onMapChange }) {
@@ -158,7 +170,7 @@ function MapTilePrefetcher({ mapState, cached }) {
   return null;
 }
 
-export default function LeafletMapInner({ pfz, alerts, mapState, cached, currentLocation, onMapChange, route, routeLoading, onRouteRequest }) {
+export default function LeafletMapInner({ pfz, alerts, mapState, cached, currentLocation, onMapChange, route, routeLoading, onRouteRequest, selectedPfz, onPfzSelect }) {
   const activeAlerts = alertCollection(alerts);
   const [showPfz, setShowPfz] = useState(true);
   const [showAlerts, setShowAlerts] = useState(true);
@@ -195,7 +207,7 @@ export default function LeafletMapInner({ pfz, alerts, mapState, cached, current
       <RouteClickHandler active={planningRoute} onSelect={selectRouteDestination} />
       <RouteLine route={route} />
       {showPfz && pfz?.features?.length ? (
-        <GeoJSON key={`pfz-${pfz.last_updated || pfz.features.length}-${pfz.features[0]?.geometry?.coordinates?.[0]?.[0]?.[0]}`} data={pfz} style={(feature) => styleFeature(feature, cached, pfz.stale)} onEachFeature={bindPopup} />
+        <GeoJSON key={`pfz-${pfz.last_updated || pfz.features.length}-${selectedPfz?.key || "none"}`} data={pfz} style={(feature) => styleFeature(feature, cached, pfz.stale, selectedPfz?.key)} onEachFeature={(feature, layer) => bindPopup(feature, layer, onPfzSelect)} />
       ) : null}
       {showAlerts && <GeoJSON data={activeAlerts} style={(feature) => styleFeature(feature, cached)} onEachFeature={bindPopup} />}
     </MapContainer>
@@ -203,7 +215,7 @@ export default function LeafletMapInner({ pfz, alerts, mapState, cached, current
       <div className="map-live-chip"><span />Live marine layers</div>
       <div className="map-layer-controls"><button type="button" className={showPfz ? "is-active" : ""} onClick={() => setShowPfz((value) => !value)}>PFZ {pfz?.features?.length || 0}</button><button type="button" className={showAlerts ? "is-active warning" : ""} onClick={() => setShowAlerts((value) => !value)}>Alerts {alerts.length}</button></div>
     </div>
-    <div className="route-control"><button type="button" disabled={!currentLocation || routeLoading} className={planningRoute ? "is-planning" : ""} onClick={() => setPlanningRoute((value) => !value)}>{routeLoading ? "Finding route…" : planningRoute ? "Click the map to set destination" : "Plan safe route"}</button>{route && <div><strong>{route.distance_km.toFixed(1)} km · {route.estimated_time_mins} min</strong><span>{route.hazard_notes?.[0] || "Route avoids known hazards."}</span></div>}</div>
+    <div className="route-control"><button type="button" disabled={!currentLocation || routeLoading} className={planningRoute ? "is-planning" : ""} onClick={() => selectedPfz ? onRouteRequest?.(selectedPfz.destination) : setPlanningRoute((value) => !value)}>{routeLoading ? "Finding route…" : selectedPfz ? "Route to selected PFZ" : planningRoute ? "Click the map to set destination" : "Plan safe route"}</button>{route && <div><strong>{route.distance_km.toFixed(1)} km · {route.estimated_time_mins} min</strong><span>{route.hazard_notes?.[0] || "Route avoids known hazards."}</span></div>}</div>
     {routePosition && <div className="route-endpoint">Destination set</div>}
     </div>
   );

@@ -18,7 +18,7 @@ async def _open_meteo(latitude: float, longitude: float) -> dict[str, Any]:
         "latitude": latitude,
         "longitude": longitude,
         "hourly": "wave_height,wind_speed_10m,wind_gusts_10m,precipitation_probability,weather_code",
-        "forecast_days": 1,
+        "forecast_days": 2,
         "timezone": "UTC",
     }
     async with httpx.AsyncClient(timeout=20) as client:

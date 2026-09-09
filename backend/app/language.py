@@ -28,6 +28,8 @@ QUERY_TRANSLATIONS = {
     "bn-IN": {
         "মাছ কোথায়": "where fish", "কোথায় যেতে হবে": "where fish", "মাছ ধরতে": "where fish",
         "মাছ": "where fish", "ধরা": "where fish", "সীমানা সতর্কতা": "boundary warning", "ধরা কম কেন": "why low catch",
+        "আমি কি এখন বেরোতে পারি": "is it safe to go out now", "এখন কি বের হতে পারি": "is it safe to go out now",
+        "আমি কি এখন সমুদ্রে যেতে পারি": "is it safe to sail now", "এখন সমুদ্রে যাওয়া নিরাপদ": "is it safe to sail now",
         "माँस धरते": "where fish", "माँस": "where fish", "धरते": "where fish", "कहाँ जाना चाहिए": "where fish",
     },
     "od-IN": {"ମାଛ କେଉଁଠାରେ": "where fish", "ସୀମା ସତର୍କତା": "boundary warning", "ଧରା କମ କାହିଁକି": "why low catch"},
@@ -63,6 +65,7 @@ ANSWER_TRANSLATIONS = {
         "Regulation": "সতর্কতা: {zone}-এ {restriction} চালু আছে।",
         "Route": "নিরাপদ পথ {hazards} এড়িয়ে চলে।",
         "Trend": "কম মাছ ধরার কারণ দুর্বল সমুদ্র পরিস্থিতি হতে পারে।",
+        "General": "আমি সামুদ্রিক ও মাছ ধরার প্রশ্নে সাহায্য করতে পারি।",
     },
     "od-IN": {
         "PFZ": "{location} ନିକଟରେ ଭଲ ମାଛ ଧରିବା ଅଞ୍ଚଳ ଅଛି। ନିଶ୍ଚିତତା {confidence}।",
@@ -109,8 +112,6 @@ def translate_to_english(text: str, language: str) -> str:
     return clean
 
 def translate_answer(intent: str, language: str, values: dict) -> str:
-    if values.get("available") is False:
-        return values["english"]
     template = ANSWER_TRANSLATIONS.get(language, {}).get(intent)
     if language != "en-IN":
         try:

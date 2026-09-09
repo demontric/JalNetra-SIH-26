@@ -1,6 +1,7 @@
 """FastAPI entry point for the JalNetra prototype API."""
 
 import asyncio
+import json
 from datetime import UTC, datetime
 import math
 
@@ -94,6 +95,7 @@ class QueryRequest(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     distance_to_coast_km: float | None = None
+    history: list[dict] = []
 
 
 class SpeechRequest(BaseModel):
@@ -116,7 +118,7 @@ def get_alerts() -> list[dict]:
     return []
 
 
-async def run_query(query: str, language: str = "en-IN", latitude: float | None = None, longitude: float | None = None, distance_to_coast_km: float | None = None) -> dict:
+async def run_query(query: str, language: str = "en-IN", latitude: float | None = None, longitude: float | None = None, distance_to_coast_km: float | None = None, history: list[dict] | None = None, input_language: str | None = None) -> dict:
     """Run the canonical specialist graph for a location-aware answer."""
     requested_language = normalize_language(language)
     if not query.strip():
@@ -127,6 +129,8 @@ async def run_query(query: str, language: str = "en-IN", latitude: float | None 
         "query": query,
         "original_query": query,
         "requested_language": requested_language,
+        "input_language": normalize_language(input_language) if input_language else None,
+        "chat_history": history or [],
         "location": ({
             "latitude": latitude,
             "longitude": longitude,
@@ -149,7 +153,7 @@ async def run_query(query: str, language: str = "en-IN", latitude: float | None 
 @app.post("/api/v1/query")
 async def submit_query(request: QueryRequest) -> dict:
     try:
-        return await run_query(request.query, request.language, request.latitude, request.longitude, request.distance_to_coast_km)
+        return await run_query(request.query, request.language, request.latitude, request.longitude, request.distance_to_coast_km, request.history)
     except GeminiServiceError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
@@ -168,6 +172,10 @@ def synthesize_speech(request: SpeechRequest) -> dict:
 async def submit_voice_query(
     audio: UploadFile = File(...),
     language: str = Form("hi-IN"),
+    reply_language: str = Form("en-IN"),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
+    history: str = Form("[]"),
 ) -> dict:
     """Transcribe regional speech, answer in the selected language, and synthesize it."""
     if not audio.content_type or not audio.content_type.startswith("audio/"):
@@ -184,13 +192,32 @@ async def submit_voice_query(
         raise HTTPException(status_code=error.status_code, detail=str(error)) from error
 
     try:
-        query_result = await run_query(transcribed_text, language)
+        english_query = translate_to_english(transcribed_text, normalize_language(language))
+    except GeminiServiceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    try:
+        voice_history = json.loads(history)
+        if not isinstance(voice_history, list):
+            voice_history = []
+    except (TypeError, ValueError):
+        voice_history = []
+
+    try:
+        query_result = await run_query(
+            english_query,
+            reply_language,
+            latitude,
+            longitude,
+            history=voice_history,
+            input_language="en-IN",
+        )
     except GeminiServiceError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     audio_base64 = None
     voice_error = None
     try:
-        audio_base64 = text_to_speech(query_result["answer"], language)
+        audio_base64 = text_to_speech(query_result["answer"], query_result["language"])
     except SarvamServiceError as error:
         # The text response remains useful if a quota/service error affects TTS.
         voice_error = str(error)
@@ -209,7 +236,7 @@ async def submit_voice_query(
         "execution_log": query_result.get("execution_log", []),
         "original_query": query_result.get("original_query", transcribed_text),
         "translated_query": query_result.get("translated_query", transcribed_text),
-        "language": language,
+        "language": query_result["language"],
         "voice_error": voice_error,
     }
 

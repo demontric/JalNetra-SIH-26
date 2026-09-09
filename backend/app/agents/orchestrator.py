@@ -20,7 +20,7 @@ def route_sub_tasks(state: AgentState) -> list[str]:
         for name in task.get("agents", []):
             if name in AGENT_NODES and name not in selected:
                 selected.append(name)
-    return selected or ["weather"]
+    return selected or ["synthesizer"]
 
 
 def build_graph():
@@ -33,7 +33,7 @@ def build_graph():
     workflow.add_node("reporting", reporting_agent)
     workflow.add_node("synthesizer", synthesizing_agent)
     workflow.add_edge(START, "intent")
-    workflow.add_conditional_edges("intent", route_sub_tasks, {name: name for name in AGENT_NODES})
+    workflow.add_conditional_edges("intent", route_sub_tasks, {**{name: name for name in AGENT_NODES}, "synthesizer": "synthesizer"})
     for name in AGENT_NODES:
         workflow.add_edge(name, "synthesizer")
     workflow.add_edge("synthesizer", END)
