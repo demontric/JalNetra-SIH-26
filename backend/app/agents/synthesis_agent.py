@@ -45,23 +45,42 @@ def synthesizing_agent(state: AgentState) -> AgentState:
         else:
             evidence.append(weather["error"])
             logs.append({"level": "warning", "stage": "weather", "message": weather["error"]})
-    for name, result in (("geofence", state.get("geofence_result")), ("route", state.get("route_result"))):
+    route = state.get("route_result")
+    if route and route.get("available"):
+        evidence.append(
+            f"A safe route to the destination is {route['distance_km']} kilometers, "
+            f"about {route['estimated_time_mins']} minutes away."
+        )
+        evidence.append(route["hazard_notes"][0])
+        logs.append({"level": "success", "stage": "route", "message": "Computed a hazard-aware safe route."})
+        route_feature = {
+            **route["path_geojson"],
+            "properties": {**route["path_geojson"].get("properties", {}), "zone_type": "safe_route", "name": "Planned route"},
+        }
+        geojson = geojson or {"type": "FeatureCollection", "features": [route_feature]}
+    for name, result in (("geofence", state.get("geofence_result")), ("route", route)):
         if result and not result.get("available", True):
-            evidence.append(result["error"])
+            if name != "geofence" or intent == "Regulation":
+                evidence.append(result["error"])
             logs.append({"level": "warning", "stage": name, "message": result["error"]})
     english = " ".join(item.rstrip(".") + "." for item in evidence) if evidence else "No marine evidence was available for this request."
     candidate = ocean.get("candidates", [{}])[0] if ocean else {}
-    available = bool((ocean or {}).get("available") or (weather or {}).get("available"))
+    raw_weather = (weather or {}).get("raw_values", {})
+    restrictions = (state.get("geofence_result") or {}).get("active_restrictions", [])
+    restriction = ", ".join(item.get("name", str(item)) for item in restrictions) or "no active restriction"
+    route_hazards = "; ".join((route or {}).get("hazard_notes", [])) or "; ".join((weather or {}).get("reasons", [])) or "known hazards"
+    available = bool((ocean or {}).get("available") or (weather or {}).get("available") or (route or {}).get("available"))
     answer = translate_answer(intent, state.get("requested_language", "en-IN"), {
         "english": english,
         "available": available,
         "location": "the selected map location",
         "confidence": f"{candidate.get('confidence_score', 0):.0%}",
-        "wave": "not available",
-        "threshold": "not available",
-        "zone": "the selected map location",
-        "restriction": "a restriction",
-        "hazards": "known hazards",
+        "wave": f"{float(raw_weather.get('wave_height_m', 0)):.1f}",
+        "threshold": "2.5",
+        "zone": (state.get("geofence_result") or {}).get("zone", "the selected map location"),
+        "restriction": restriction,
+        "hazards": route_hazards,
+        "requested_language": state.get("requested_language", "en-IN"),
     })
     logs.append({"level": "success", "stage": "response", "message": f"Prepared simple {state.get('requested_language', 'en-IN')} response."})
     nodes.append({"id": "response", "label": "Evidence-based response", "type": "agent"})

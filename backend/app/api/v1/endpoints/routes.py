@@ -1,13 +1,17 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
+from app.services.route_planner import RoutePlanningError, plan_route
+
 router = APIRouter()
 
+
 class RouteRequest(BaseModel):
-    origin: Dict[str, float]       # {"lat": 9.28, "lon": 79.12}
+    origin: Dict[str, float]  # {"lat": 9.28, "lon": 79.12}
     destination: Dict[str, float]  # {"lat": 9.45, "lon": 79.35}
     vessel_type: Optional[str] = "motorized_boat"
+
 
 class RouteResponse(BaseModel):
     route_id: str
@@ -16,22 +20,11 @@ class RouteResponse(BaseModel):
     hazard_notes: List[str]
     path_geojson: Dict[str, Any]
 
+
 @router.post("/route", response_model=RouteResponse)
-def calculate_safe_route(request: RouteRequest):
-    return RouteResponse(
-        route_id="route_demo_101",
-        distance_km=24.5,
-        estimated_time_mins=45,
-        hazard_notes=["Passes 2km clear of Restricted MPA Zone"],
-        path_geojson={
-            "type": "Feature",
-            "geometry": {
-                "type": "LineString",
-                "coordinates": [
-                    [request.origin.get("lon", 79.12), request.origin.get("lat", 9.28)],
-                    [request.destination.get("lon", 79.35), request.destination.get("lat", 9.45)]
-                ]
-            },
-            "properties": {"status": "optimized"}
-        }
-    )
+def calculate_safe_route(request: RouteRequest) -> RouteResponse:
+    try:
+        result = plan_route(request.origin, request.destination, request.vessel_type or "motorized_boat")
+    except RoutePlanningError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return RouteResponse(**result)

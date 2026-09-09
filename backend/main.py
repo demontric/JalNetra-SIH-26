@@ -1,5 +1,6 @@
 """FastAPI entry point for the JalNetra prototype API."""
 
+import asyncio
 from datetime import UTC, datetime
 import math
 
@@ -41,7 +42,7 @@ async def get_trip_decision(latitude: float, longitude: float) -> dict:
     from app.agents.ocean_analytics import computed_pfz
     from app.agents.weather_safety import check_hazard_thresholds, fetch_weather
 
-    weather, pfz = await fetch_weather(latitude, longitude), await computed_pfz(latitude, longitude)
+    weather, pfz = await asyncio.gather(fetch_weather(latitude, longitude), computed_pfz(latitude, longitude))
     marine = weather.get("marine", {}).get("hourly", {})
     forecast = weather.get("forecast", {}).get("hourly", {})
     values = {
@@ -115,14 +116,14 @@ def get_alerts() -> list[dict]:
     return []
 
 
-def run_query(query: str, language: str = "en-IN", latitude: float | None = None, longitude: float | None = None, distance_to_coast_km: float | None = None) -> dict:
+async def run_query(query: str, language: str = "en-IN", latitude: float | None = None, longitude: float | None = None, distance_to_coast_km: float | None = None) -> dict:
     """Run the canonical specialist graph for a location-aware answer."""
     requested_language = normalize_language(language)
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
     from app.graph import graph
 
-    result = graph.invoke({
+    result = await graph.ainvoke({
         "query": query,
         "original_query": query,
         "requested_language": requested_language,
@@ -146,9 +147,9 @@ def run_query(query: str, language: str = "en-IN", latitude: float | None = None
 
 
 @app.post("/api/v1/query")
-def submit_query(request: QueryRequest) -> dict:
+async def submit_query(request: QueryRequest) -> dict:
     try:
-        return run_query(request.query, request.language, request.latitude, request.longitude, request.distance_to_coast_km)
+        return await run_query(request.query, request.language, request.latitude, request.longitude, request.distance_to_coast_km)
     except GeminiServiceError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
@@ -164,7 +165,7 @@ def synthesize_speech(request: SpeechRequest) -> dict:
 
 
 @app.post("/api/v1/voice-query")
-def submit_voice_query(
+async def submit_voice_query(
     audio: UploadFile = File(...),
     language: str = Form("hi-IN"),
 ) -> dict:
@@ -183,7 +184,7 @@ def submit_voice_query(
         raise HTTPException(status_code=error.status_code, detail=str(error)) from error
 
     try:
-        query_result = run_query(transcribed_text, language)
+        query_result = await run_query(transcribed_text, language)
     except GeminiServiceError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     audio_base64 = None

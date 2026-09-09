@@ -1,25 +1,15 @@
 """Weather and marine hazard specialist."""
 
-import asyncio
-
 from app.agents.state import AgentState
 from app.agents.weather_safety import check_hazard_thresholds, fetch_weather
 
 
-def weather_safety_agent(state: AgentState) -> AgentState:
+async def weather_safety_agent(state: AgentState) -> AgentState:
     location = state.get("location") or {}
-    lat = location.get("latitude") if location.get("latitude") is not None else 21.63
-    lon = location.get("longitude") if location.get("longitude") is not None else 87.51
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if loop and loop.is_running():
-        import nest_asyncio
-        nest_asyncio.apply()
-        source = loop.run_until_complete(fetch_weather(lat, lon))
-    else:
-        source = asyncio.run(fetch_weather(lat, lon))
+    lat, lon = location.get("latitude"), location.get("longitude")
+    if lat is None or lon is None:
+        return {"weather_result": {"available": False, "error": "No resolved location available"}}
+    source = await fetch_weather(lat, lon)
     if not source.get("available", True):
         return {"weather_result": {"available": False, "error": source.get("error", "Weather is unavailable."), "stale": source.get("stale", False)}}
     hourly = source.get("marine", {}).get("hourly", {})

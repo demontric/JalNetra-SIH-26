@@ -22,10 +22,12 @@ def _intent(query: str) -> str:
 
 
 def _entities(query: str, location: dict | None) -> dict:
-    entities: dict[str, Any] = {"coordinates": [location["latitude"], location["longitude"]]} if location else {}
-    match = re.search(r"(-?\d+(?:\.\d+)?)\s*[,/]\s*(-?\d+(?:\.\d+)?)", query)
+    entities: dict[str, Any] = {}
+    match = re.search(r"\b(?:near|at|to|towards|destination)\b[^\d-]{0,24}(-?\d+(?:\.\d+)?)\s*[,/]\s*(-?\d+(?:\.\d+)?)", query, re.I)
     if match:
-        entities["coordinates"] = [float(match.group(1)), float(match.group(2))]
+        latitude, longitude = float(match.group(1)), float(match.group(2))
+        if -90 <= latitude <= 90 and -180 <= longitude <= 180:
+            entities["coordinates"] = [latitude, longitude]
     if "tomorrow" in query.lower():
         entities["date"] = str(date.today() + timedelta(days=1))
     return entities

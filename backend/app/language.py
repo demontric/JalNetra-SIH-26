@@ -111,11 +111,23 @@ def translate_to_english(text: str, language: str) -> str:
 def translate_answer(intent: str, language: str, values: dict) -> str:
     if values.get("available") is False:
         return values["english"]
+    template = ANSWER_TRANSLATIONS.get(language, {}).get(intent)
     if language != "en-IN":
         try:
             from app.services.gemini_service import translate_from_english
-            return translate_from_english(values["english"], language)
+            translated = translate_from_english(values["english"], language)
+            if _uses_requested_script(translated, language):
+                return translated
         except Exception:
             pass
-    template = ANSWER_TRANSLATIONS.get(language, {}).get(intent)
     return template.format(**values) if template else values["english"]
+
+
+def _uses_requested_script(text: str, language: str) -> bool:
+    scripts = {
+        "hi-IN": r"[\u0900-\u097F]", "ta-IN": r"[\u0B80-\u0BFF]",
+        "te-IN": r"[\u0C00-\u0C7F]", "bn-IN": r"[\u0980-\u09FF]",
+        "od-IN": r"[\u0B00-\u0B7F]", "ml-IN": r"[\u0D00-\u0D7F]",
+        "kn-IN": r"[\u0C80-\u0CFF]",
+    }
+    return bool(re.search(scripts.get(language, r"."), text))

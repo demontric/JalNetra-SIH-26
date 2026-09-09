@@ -102,7 +102,7 @@ def translate_from_english(text: str, language: str) -> str:
     if language == "en-IN":
         return text.strip()
     return _generate(
-        f"Translate the answer into natural {LANGUAGE_NAMES.get(language, language)}. Return only the translation. "
+        f"Requested language locale: {language}. Translate the answer into natural {LANGUAGE_NAMES.get(language, language)}. Return only the translation. "
         "Keep marine terms, numbers, coordinates, caveats, and paragraph breaks accurate.",
         text,
     )

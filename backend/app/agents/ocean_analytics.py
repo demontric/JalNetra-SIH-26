@@ -200,10 +200,6 @@ def score_pfz_grid(sst_grid: list[dict[str, float]], chlorophyll_grid: list[dict
         chl_norm = (cell["chlorophyll_value"] - chl_min) / (chl_max - chl_min) if chl_max > chl_min else 0.5
         cell["confidence_score"] = round(0.5 * gradient_norm + 0.5 * chl_norm, 4)
     qualified = [cell for cell in cells if cell["confidence_score"] >= 0.5]
-    if not qualified and cells:
-        best_cell = max(cells, key=lambda c: c["confidence_score"])
-        best_cell["confidence_score"] = max(best_cell["confidence_score"], 0.6)
-        return [best_cell]
     return qualified
 
 

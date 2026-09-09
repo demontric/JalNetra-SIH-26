@@ -1,26 +1,15 @@
 """PFZ specialist backed by the globally loaded model and live providers."""
 
-import asyncio
-
 from app.agents.state import AgentState
 from app.agents.ocean_analytics import computed_pfz
-from app.pfz_model import current_pfz_prediction
 
 
-def ocean_analytics_agent(state: AgentState) -> AgentState:
+async def ocean_analytics_agent(state: AgentState) -> AgentState:
     location = state.get("location") or {}
-    lat = location.get("latitude") if location.get("latitude") is not None else 21.63
-    lon = location.get("longitude") if location.get("longitude") is not None else 87.51
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if loop and loop.is_running():
-        import nest_asyncio
-        nest_asyncio.apply()
-        geojson = loop.run_until_complete(computed_pfz(lat, lon))
-    else:
-        geojson = asyncio.run(computed_pfz(lat, lon))
+    lat, lon = location.get("latitude"), location.get("longitude")
+    if lat is None or lon is None:
+        return {"ocean_result": {"available": False, "error": "No resolved location available"}}
+    geojson = await computed_pfz(lat, lon)
     candidates = [
         {
             "confidence_score": feature["properties"]["confidence_score"],

@@ -13,8 +13,8 @@ class QueryRequest(BaseModel):
 
 
 @router.post("/query")
-def process_user_query(request: QueryRequest):
+async def process_user_query(request: QueryRequest):
     """Use the canonical graph route; FastAPI runs this sync handler off-loop."""
     from main import run_query
 
-    return run_query(request.query, request.language, request.latitude, request.longitude)
+    return await run_query(request.query, request.language, request.latitude, request.longitude)
