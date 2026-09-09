@@ -9,7 +9,6 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-import copernicusmarine  # type: ignore[import-untyped]
 
 try:
     import truststore
@@ -99,6 +98,8 @@ def _sync_copernicus_grid(latitude: float, longitude: float, radius: float = 0.5
     password = settings.COPERNICUS_MARINE_PASSWORD
 
     try:
+        import copernicusmarine  # type: ignore[import-untyped]
+
         ds_chl = copernicusmarine.open_dataset(
             dataset_id="cmems_mod_glo_bgc-pft_anfc_0.25deg_P1D-m",
             username=username,
@@ -290,4 +291,4 @@ async def computed_pfz(latitude: float, longitude: float) -> dict[str, Any]:
         ttl=_PFZ_TTL_SECONDS,
     )
     _pfz_mem_cache[ck] = (_time.monotonic(), result)
-    return result
+    return result

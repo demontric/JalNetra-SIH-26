@@ -56,6 +56,10 @@ export function fetchAlerts(params) {
   return requestJson(withParams("/api/v1/alerts", params));
 }
 
+export function fetchTripDecision(params) {
+  return requestJson(withParams("/api/v1/trip-decision", params));
+}
+
 export function postQuery(query, { language = "en-IN", userId = "dashboard-user", latitude, longitude } = {}) {
   return requestJson("/api/v1/query", {
     method: "POST",

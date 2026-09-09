@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
-from typing import Any
 
 import requests
 from dotenv import load_dotenv
@@ -21,6 +21,38 @@ class GeminiServiceError(RuntimeError):
     """Raised when Gemini cannot produce a response."""
 
 
+_TEXT_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"],
+    "additionalProperties": False,
+}
+
+
+def _response_text(payload: dict) -> str:
+    candidates = payload.get("candidates", [])
+    if not candidates:
+        if payload.get("promptFeedback", {}).get("blockReason"):
+            raise GeminiServiceError("Gemini blocked this request due to safety settings.")
+        raise GeminiServiceError("Gemini returned no response candidates.")
+
+    candidate = candidates[0]
+    parts = candidate.get("content", {}).get("parts", [])
+    content = "".join(part.get("text", "") for part in parts)
+    if not content:
+        if candidate.get("finishReason") in {"SAFETY", "RECITATION", "BLOCKLIST"}:
+            raise GeminiServiceError("Gemini blocked this response due to safety settings.")
+        raise GeminiServiceError("Gemini returned an empty response.")
+
+    try:
+        answer = json.loads(content)["text"].strip()
+    except (KeyError, TypeError, ValueError) as error:
+        raise GeminiServiceError("Gemini returned an invalid structured response.") from error
+    if not answer:
+        raise GeminiServiceError("Gemini returned an empty response.")
+    return answer
+
+
 def _generate(system_prompt: str, user_prompt: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -33,14 +65,16 @@ def _generate(system_prompt: str, user_prompt: str) -> str:
             json={
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-                "generationConfig": {"temperature": 0.2},
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "responseMimeType": "application/json",
+                    "responseJsonSchema": _TEXT_RESPONSE_SCHEMA,
+                },
             },
             timeout=45,
         )
         response.raise_for_status()
         payload = response.json()
-        parts = payload["candidates"][0]["content"]["parts"]
-        content = "".join(part.get("text", "") for part in parts)
     except requests.RequestException as error:
         status = getattr(error.response, "status_code", None)
         if status in (401, 403):
@@ -48,13 +82,10 @@ def _generate(system_prompt: str, user_prompt: str) -> str:
         if status == 429:
             raise GeminiServiceError("Gemini is currently rate limited. Please try again shortly.") from error
         raise GeminiServiceError("Gemini is temporarily unavailable.") from error
-    except (KeyError, IndexError, TypeError, ValueError) as error:
+    except ValueError as error:
         raise GeminiServiceError("Gemini returned an invalid response.") from error
 
-    answer = content.strip()
-    if not answer:
-        raise GeminiServiceError("Gemini returned an empty response.")
-    return answer
+    return _response_text(payload)
 
 
 def translate_to_english(text: str, language: str) -> str:

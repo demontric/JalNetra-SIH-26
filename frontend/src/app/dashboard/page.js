@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import GeospatialMap from "@/components/GeospatialMap";
 import ReasoningTracePanel from "@/components/ReasoningTracePanel";
 import VoiceInterface from "@/components/VoiceInterface";
-import { ApiError, fetchAlerts, fetchPFZ, postQuery, postRoute, synthesizeSpeech } from "@/lib/api";
+import { ApiError, fetchAlerts, fetchPFZ, fetchTripDecision, postQuery, postRoute, synthesizeSpeech } from "@/lib/api";
 import { clearChatHistory, loadLastChatMessage, loadMapState, loadOfflineSnapshot, loadRecentChatMessages, saveCachedData, saveChatMessage, saveMapState } from "@/lib/db";
 import { LOCALES, message, setAppLocale } from "@/lib/i18n";
 import { useResolvedLocation } from "@/lib/location-context";
@@ -17,6 +17,21 @@ const QUICK_QUERIES = [
   ["What should I check before going to sea?", "Safety check"],
 ];
 const DEFAULT_MAP_STATE = { center: [20.25, 88.45], zoom: 5 };
+const TRIP_LABELS = {
+  "en-IN": { title: "Trip decision", safe: "Safe to sail", caution: "Caution", unsafe: "Do not sail" },
+  "hi-IN": { title: "यात्रा निर्णय", safe: "समुद्र में जाना सुरक्षित है", caution: "सावधानी", unsafe: "समुद्र में न जाएं" },
+  "ta-IN": { title: "பயண முடிவு", safe: "கடலுக்குச் செல்ல பாதுகாப்பானது", caution: "எச்சரிக்கை", unsafe: "கடலுக்குச் செல்ல வேண்டாம்" },
+  "te-IN": { title: "ప్రయాణ నిర్ణయం", safe: "సముద్రానికి వెళ్లడం సురక్షితం", caution: "జాగ్రత్త", unsafe: "సముద్రానికి వెళ్లవద్దు" },
+  "bn-IN": { title: "যাত্রার সিদ্ধান্ত", safe: "সমুদ্রে যাওয়া নিরাপদ", caution: "সতর্কতা", unsafe: "সমুদ্রে যাবেন না" },
+  "od-IN": { title: "ଯାତ୍ରା ନିଷ୍ପତ୍ତି", safe: "ସମୁଦ୍ରକୁ ଯିବା ସୁରକ୍ଷିତ", caution: "ସତର୍କତା", unsafe: "ସମୁଦ୍ରକୁ ଯାଆନ୍ତୁ ନାହିଁ" },
+  "ml-IN": { title: "യാത്രാ തീരുമാനം", safe: "കടലിൽ പോകുന്നത് സുരക്ഷിതമാണ്", caution: "ജാഗ്രത", unsafe: "കടലിൽ പോകരുത്" },
+  "kn-IN": { title: "ಪ್ರಯಾಣ ನಿರ್ಧಾರ", safe: "ಸಮುದ್ರಕ್ಕೆ ಹೋಗುವುದು ಸುರಕ್ಷಿತ", caution: "ಎಚ್ಚರಿಕೆ", unsafe: "ಸಮುದ್ರಕ್ಕೆ ಹೋಗಬೇಡಿ" },
+};
+
+function tripLabel(locale, status) {
+  const copy = TRIP_LABELS[locale] || TRIP_LABELS["en-IN"];
+  return status === "Safe to sail" ? copy.safe : status === "Caution" ? copy.caution : copy.unsafe;
+}
 
 function formatAge(timestamp) {
   const hours = Math.max(0, Math.round((Date.now() - timestamp) / 3600000));
@@ -79,6 +94,7 @@ export default function DashboardPage() {
   const [offlineExpanded, setOfflineExpanded] = useState(false);
   const [route, setRoute] = useState(null);
   const [routeLoading, setRouteLoading] = useState(false);
+  const [tripDecision, setTripDecision] = useState(null);
   const { location, status: locationStatus, error: locationError, toastMessage, regions, chooseManual, changeLocation } = useResolvedLocation();
 
   useEffect(() => {
@@ -95,9 +111,10 @@ export default function DashboardPage() {
 
   const syncMarineData = useCallback(async (resolvedLocation) => {
     try {
-      const [pfzData, alertData] = await Promise.all([
+      const [pfzData, alertData, decisionData] = await Promise.all([
         resolvedLocation ? fetchPFZ({ latitude: resolvedLocation.lat, longitude: resolvedLocation.lon }) : Promise.resolve(null),
         fetchAlerts(),
+        resolvedLocation ? fetchTripDecision({ latitude: resolvedLocation.lat, longitude: resolvedLocation.lon }).catch(() => null) : Promise.resolve(null),
       ]);
       if (pfzData) {
         await saveCachedData("pfz", pfzData);
@@ -105,12 +122,14 @@ export default function DashboardPage() {
       }
       await saveCachedData("alerts", alertData);
       setAlerts(alertData);
+      setTripDecision(decisionData);
       setCachedAt(Date.now());
       setIsOffline(false);
       setStatus("Live");
       return true;
     } catch (error) {
       setIsOffline(true);
+      setTripDecision(null);
       await loadCachedMarineData();
       setStatus("Offline — showing cached marine data");
       setLogs((current) => [...current, { level: "error", stage: "offline", message: error.message }]);
@@ -227,6 +246,11 @@ export default function DashboardPage() {
     } finally { setRouteLoading(false); }
   }
 
+  function planRouteToFishingZone() {
+    const destination = tripDecision?.best_fishing_direction;
+    if (destination) planRoute({ lat: destination.latitude, lon: destination.longitude });
+  }
+
   return (
     <main className="app-shell">
       {isOffline && <div className="offline-banner" role="status">Offline — showing data from {cachedAt ? formatAge(cachedAt) : "the last successful sync"}</div>}
@@ -273,6 +297,14 @@ export default function DashboardPage() {
 
         <section className={`map-column ${!showMap ? "mobile-hidden" : ""}`}>
           <div className="map-heading"><div><p className="eyebrow">Live view</p><h2>{message(appLanguage, "marineMap")}</h2></div><span className="layer-summary">{layerSummary}</span></div>
+          {tripDecision && <section className={`trip-decision ${tripDecision.status === "Safe to sail" ? "is-safe" : tripDecision.status === "Caution" ? "is-caution" : "is-unsafe"}`} aria-label={TRIP_LABELS[appLanguage]?.title || "Trip decision"}>
+            <div className="trip-decision-heading"><div><p>{TRIP_LABELS[appLanguage]?.title || "Trip decision"}</p><h3>{tripLabel(appLanguage, tripDecision.status)}</h3></div><span>{formatAge(new Date(tripDecision.fresh_at).getTime())}</span></div>
+            <p className="trip-reason">{tripDecision.reasons?.[0] || "Weather conditions are within the current safety thresholds."}</p>
+            <div className="trip-drivers">{tripDecision.drivers.map((driver) => <div key={driver.label} className={driver.safe ? "is-ok" : "is-risk"}><span>{driver.label}</span><strong>{driver.value}</strong></div>)}</div>
+            {tripDecision.best_fishing_direction && <div className="fishing-direction"><span>Best fishing direction</span><strong>{tripDecision.best_fishing_direction.bearing_deg}° · {tripDecision.best_fishing_direction.distance_km} km away</strong></div>}
+            <div className="trip-actions"><button type="button" onClick={planRouteToFishingZone} disabled={!tripDecision.best_fishing_direction || routeLoading}>Show safe route</button><button type="button" className="secondary" onClick={() => submitQuery("When are conditions safer for fishing from my current location?")}>See safer time</button></div>
+            <div className="trip-sources">Updated now · {tripDecision.sources.join(" · ") || "Live providers"}</div>
+          </section>}
           {pfz && (pfz.data_availability === "no_data" || !pfz?.features?.length) && (
             <div className="pfz-notice no-data" role="status">
               <Icon name="spark" size={16} />
